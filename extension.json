@@ -1,0 +1,9 @@
+{
+  "name": "zot-loop",
+  "version": "0.1.0",
+  "exec": "go",
+  "args": ["run", "."],
+  "language": "go",
+  "description": "Timed reminders, background command monitors, and lightweight task tracking for zot",
+  "enabled": true
+}
