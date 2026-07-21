@@ -5,7 +5,7 @@ Small automation helpers for zot: interval reminders, background command monitor
 ## Install
 
 ```bash
-zot ext install .
+zot ext install https://github.com/patriceckhart/zot-loop
 ```
 
 For local iteration, load it without installing:
