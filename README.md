@@ -92,7 +92,7 @@ When opened without arguments, `/tasks` shows an interactive panel:
 
 ## Storage
 
-The extension stores `state.json` in its zot extension data directory. Reminder and task state persists across extension reloads. Monitor processes are runtime-only and are stopped on shutdown.
+The extension stores task state in `state.json` in its zot extension data directory. Loops and monitor processes belong only to the zot agent that created them and stop when that agent exits. Tasks persist across extension reloads.
 
 ## Docker
 
@@ -121,7 +121,8 @@ Use `/reload-ext` inside zot after editing the Go files.
 - intervals use Go duration-style values plus days: `30s`, `5m`, `2h`, `1d`
 - five-field cron expressions are supported, for example `0 9 * * 1-5`
 - event loops can listen to `turn_start`, `turn_end`, `tool_call`, `assistant_message`, and `monitor:done`
-- loop fires submit prompts back into zot through the extension host, so scheduled and event loops can re-wake the agent
+- loop fires submit prompts back into the zot agent that created them, so scheduled and event loops can re-wake that agent
+- loops are runtime-only and do not resume after their zot agent exits
 
 ## License
 

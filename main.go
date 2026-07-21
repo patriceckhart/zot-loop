@@ -91,9 +91,7 @@ type Monitor struct {
 }
 
 type State struct {
-	Loops    []Loop `json:"loops"`
 	Tasks    []Task `json:"tasks"`
-	NextLoop int    `json:"nextLoop"`
 	NextTask int    `json:"nextTask"`
 }
 
@@ -708,18 +706,14 @@ func (a *App) load() {
 	if json.Unmarshal(b, &s) != nil {
 		return
 	}
-	a.loops = s.Loops
 	a.tasks = s.Tasks
-	if s.NextLoop > 0 {
-		a.nextLoop = s.NextLoop
-	}
 	if s.NextTask > 0 {
 		a.nextTask = s.NextTask
 	}
 }
 func (a *App) saveLocked() {
 	_ = os.MkdirAll(filepath.Dir(a.dataPath), 0755)
-	b, _ := json.MarshalIndent(State{Loops: a.loops, Tasks: a.tasks, NextLoop: a.nextLoop, NextTask: a.nextTask}, "", "  ")
+	b, _ := json.MarshalIndent(State{Tasks: a.tasks, NextTask: a.nextTask}, "", "  ")
 	_ = os.WriteFile(a.dataPath, b, 0644)
 }
 func (a *App) shutdown() {
