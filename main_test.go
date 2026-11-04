@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,5 +92,46 @@ func TestLoopsAreRuntimeOnly(t *testing.T) {
 	}
 	if strings.Contains(string(saved), `"loops"`) || strings.Contains(string(saved), `"nextLoop"`) {
 		t.Fatalf("runtime-only loop state was persisted: %s", saved)
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	fn()
+	w.Close()
+	b, _ := io.ReadAll(r)
+	return string(b)
+}
+
+func TestMonitorDoneWakesAgent(t *testing.T) {
+	a := &App{monitors: map[string]*Monitor{}, nextLoop: 1, nextTask: 1, nextMon: 1, dataPath: t.TempDir() + "/state.json"}
+	a.host.CWD = t.TempDir()
+	out := captureStdout(t, func() {
+		m := &Monitor{ID: "1", Command: "echo hello; echo last", Description: "demo", OnDone: "summarize it", Status: "running"}
+		a.monitors["1"] = m
+		a.runMonitor(context.Background(), m)
+	})
+	if !strings.Contains(out, `"type":"submit"`) {
+		t.Fatalf("expected submit frame, got %s", out)
+	}
+	for _, want := range []string{"demo", "hello", "last", "summarize it"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("submit missing %q: %s", want, out)
+		}
+	}
+}
+
+func TestStoppedMonitorDoesNotWakeAgent(t *testing.T) {
+	a := &App{monitors: map[string]*Monitor{"1": {ID: "1"}}}
+	out := captureStdout(t, func() { a.finishMonitor("1", "stopped", "stopped") })
+	if strings.Contains(out, `"type":"submit"`) {
+		t.Fatalf("unexpected submit: %s", out)
 	}
 }

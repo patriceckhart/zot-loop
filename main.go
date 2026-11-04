@@ -150,7 +150,7 @@ func (a *App) register() {
 		tool("LoopCreate", "Schedule a recurring reminder on an interval, an event, or both with debounce. Use instead of raw shell sleep loops.", schema(map[string]any{"trigger": prop("string", "Interval such as 30s, 5m, 2h, 1d, event source, or hybrid spec"), "prompt": prop("string", "Prompt or reminder text"), "recurring": prop("boolean", "Whether the reminder repeats, default true"), "triggerType": enumProp([]string{"cron", "event", "hybrid"}, "cron, event, or hybrid"), "eventSource": prop("string", "Event source for event or hybrid loops"), "debounceMs": prop("number", "Debounce for hybrid event fires, default 30000"), "taskBacklog": prop("boolean", "Auto-delete this loop when no pending or in-progress tasks remain"), "readOnly": prop("boolean", "Mark the reminder as read-only guidance"), "maxFires": prop("number", "Stop after this many fires")}, []string{"trigger", "prompt"})),
 		tool("LoopList", "List active reminders with IDs and next-fire times.", schema(map[string]any{}, nil)),
 		tool("LoopDelete", "Delete or pause a reminder by ID.", schema(map[string]any{"id": prop("string", "Loop ID"), "action": enumProp([]string{"delete", "pause", "resume"}, "Action, default delete")}, []string{"id"})),
-		tool("MonitorCreate", "Run a background command and keep recent output. Use onDone to notify when it exits.", schema(map[string]any{"command": prop("string", "Command to run"), "description": prop("string", "Short label"), "onDone": prop("string", "Message to show when the command exits")}, []string{"command"})),
+		tool("MonitorCreate", "Run a background command and keep recent output. When it exits on its own, the agent is woken with the exit status and last output lines, plus onDone if set.", schema(map[string]any{"command": prop("string", "Command to run"), "description": prop("string", "Short label"), "onDone": prop("string", "Instruction appended to the message that wakes the agent when the command exits")}, []string{"command"})),
 		tool("MonitorList", "Show background monitors with status, uptime, and recent output count.", schema(map[string]any{}, nil)),
 		tool("MonitorOutput", "Read recent output from a monitor.", schema(map[string]any{"monitorId": prop("string", "Monitor ID"), "lines": prop("number", "Number of recent lines, default 50")}, []string{"monitorId"})),
 		tool("MonitorStop", "Stop a running monitor gracefully, then force-stop it if needed.", schema(map[string]any{"monitorId": prop("string", "Monitor ID")}, []string{"monitorId"})),
@@ -486,8 +486,12 @@ func (a *App) runMonitor(ctx context.Context, m *Monitor) {
 		a.finishMonitor(m.ID, "error", err.Error())
 		return
 	}
-	go a.readLines(m.ID, stdout)
-	go a.readLines(m.ID, stderr)
+	var readers sync.WaitGroup
+	readers.Add(2)
+	go func() { defer readers.Done(); a.readLines(m.ID, stdout) }()
+	go func() { defer readers.Done(); a.readLines(m.ID, stderr) }()
+	// Pipes must be drained before Wait, or trailing output can be lost.
+	readers.Wait()
 	err := cmd.Wait()
 	status := "done"
 	exit := "exit 0"
@@ -524,9 +528,14 @@ func (a *App) finishMonitor(id, status, exit string) {
 		m.Exit = exit
 		m.EndedAt = time.Now()
 	}
-	onDone := ""
+	onDone, desc := "", ""
+	var tail []string
 	if m != nil {
-		onDone = m.OnDone
+		onDone, desc = m.OnDone, m.Description
+		tail = append(tail, m.Lines...)
+		if len(tail) > 10 {
+			tail = tail[len(tail)-10:]
+		}
 	}
 	a.mu.Unlock()
 	msg := fmt.Sprintf("Monitor #%s %s: %s", id, status, exit)
@@ -534,9 +543,29 @@ func (a *App) finishMonitor(id, status, exit string) {
 		msg += "\n" + onDone
 	}
 	a.notify("info", msg)
+	if m != nil && status != "stopped" {
+		a.submit(monitorDonePrompt(id, desc, status, exit, onDone, tail))
+	}
 	for _, prompt := range a.fireEventLoops("monitor:done", time.Now()) {
 		a.submit(prompt)
 	}
+}
+
+// monitorDonePrompt is the message that wakes the agent when a monitor exits.
+func monitorDonePrompt(id, desc, status, exit, onDone string, tail []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Monitor #%s", id)
+	if desc != "" {
+		fmt.Fprintf(&b, " (%s)", desc)
+	}
+	fmt.Fprintf(&b, " %s: %s", status, exit)
+	if len(tail) > 0 {
+		b.WriteString("\nLast output:\n" + strings.Join(tail, "\n"))
+	}
+	if onDone != "" {
+		b.WriteString("\n" + onDone)
+	}
+	return b.String()
 }
 
 func (a *App) monitorList() string {
